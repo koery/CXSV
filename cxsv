@@ -1,0 +1,160 @@
+#!/bin/bash
+#
+# Startup script for the CXSV server.
+#
+# chkconfig: 345 85 20
+# description: CXSV is a WEB APP SERVER
+# processname: php
+#第一个参数为：start|restart|stop|reload|list
+#第二个参数为应用名，如：mybbs
+#如不传入第二个参数，则操作所有应用
+#list 参数，列出当前所有运行中的应用
+# path=$(cd `dirname "$0"`;pwd)
+path=/home/www/server
+script_name="$0";
+php=/usr/local/php/bin/php
+cmd="$1"
+fail='[\033[1;31mfail\033[0m]'
+ok='[\033[1;32mOK\033[0m]'
+if [ -z "${cmd}" ];then
+  echo "Usega:$script_name start|stop|restart|reload|list|clean"
+  exit 0
+fi
+
+do_start(){
+  app_name="$1"
+  pid=`$script_name list|grep $app_name|awk '{print $1}'`
+  if [ ! -z "$pid" ];then
+    echo -e "The appServer $app_name is runing    $fail"
+  else
+    out=`$php $path/appServer.php $app_name`
+    if [ ! -z "$out" ];then
+      echo -e "$out    $fail"
+    else
+      echo -e "Starting $app_name \c"
+      pid=`$script_name list|grep "php-manager: ${app_name}"`|awk '{print $1}'
+      while [ -z "$pid" ];do
+        echo -e '.\c'
+        sleep 0.1
+        pid=`$script_name list|grep "php-manager: ${app_name}"|awk '{print $1}'`
+      done
+      echo -e "    $ok"
+    fi
+  fi
+}
+
+do_stop(){
+  app_name="$1"
+  pid=`$script_name list|grep "php-master: $app_name"|awk '{print $1}'`
+  if [ ! -z "$pid" ];then
+    kill -15 $pid
+    echo -e "Stoping $app_name \c"
+    has_proc=`$script_name list|grep $app_name|grep -v php_cron_worker|awk '{print $1}'`
+    while [ ! -z "$has_proc" ];do
+      echo -e '.\c'
+      sleep 0.1
+      has_proc=`$script_name list|grep $app_name|grep -v php_cron_worker|awk '{print $1}'`
+    done
+    echo -e "    $ok"
+  fi
+  cron_pid=`ps aux|grep "php_cron_worker"|grep $app_name|grep -v grep|awk '{print $2}'`
+  if [ ! -z "$cron_pid" ];then
+    kill -15 $cron_pid
+    echo -e "stop $app_name cron worker    $ok"
+  fi
+}
+
+do_reload(){
+  app_name="$1"
+  pid=`$script_name list|grep "php-manager: $app_name"|awk '{print $1}'`
+  if [ -z "$pid" ];then
+    echo -e "The appServer $app_name no runing    $fail"
+    exit 0
+  fi
+  kill -USR1 $pid
+  echo -e "Reload appServer $app_name    $ok"
+}
+
+do_list(){
+  ps aux|grep php|grep -v fpm|grep -v grep|awk '{print $2 "\t" $11 " " $12 " " $13 " " $14}'
+  exit 0
+}
+
+do_clean(){
+  app=$2
+  if [ -z "$app" ];then
+    echo 'usega cxsv clean "app_name"'
+    exit
+  fi
+  $0 list|grep $app|awk '{print $1}'|xargs kill -9 >> /dev/null 2>&1
+  echo -e "Clean ${app} process    $ok"
+}
+
+etc_path=$path/etc
+
+case "$1" in
+  start)
+    if [ ! -z "$2"  ];then
+      do_start $2
+    else
+      for app in $(ls "$etc_path"|grep -v createConfig|grep -v swoole|grep -v serveradmin|awk -F . '{print $1}');do
+        if [ -e "${etc_path}/${app}.ini" ];then
+          do_start $app
+        fi
+      done
+    fi
+    exit ;;
+
+  stop)
+    if [ ! -z "$2" ];then
+      do_stop $2
+    else
+      for app in $(ls "$etc_path"|grep -v createConfig|grep -v swoole|grep -v serveradmin|awk -F . '{print $1}');do
+        if [ -e "${etc_path}/${app}.ini" ];then
+          do_stop $app
+        fi
+      done
+    fi
+    exit 0;;
+
+
+  restart)
+    if [ ! -z "$2" ];then
+      do_stop $2
+      do_start $2
+    else
+      for app in $(ls "$etc_path"|grep -v createConfig|grep -v swoole|grep -v serveradmin|awk -F . '{print $1}');do
+        if [ -e "${etc_path}/${app}.ini" ];then
+          do_stop $app
+          do_start $app
+          echo ""
+        fi
+      done
+    fi
+    exit 0;;
+
+
+  reload)
+    if [ ! -z "$2" ];then
+      do_reload $2
+    else
+      for app in $(ls "$etc_path"|grep -v createConfig|grep -v swoole|grep -v serveradmin|awk -F . '{print $1}');do
+        if [ -e "${etc_path}/${app}.ini" ];then
+          do_reload $app
+        fi
+      done
+    fi
+    exit 0;;
+
+  list)
+    do_list
+    exit 0;;
+
+  clean)
+    do_clean $1 $2
+    exit 0;;
+  *)
+    echo "Usega:$script_name start|stop|restart|reload|list|clean"
+    exit 1;;
+esac
+exit 0

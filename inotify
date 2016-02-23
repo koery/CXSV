@@ -1,0 +1,141 @@
+#!/bin/bash
+#该脚本的作用是通过传入的应用，来监视该应用目录的变化，从而实时重载服务器，以实现代码热更新的目的,调试时特别有用
+#依赖 inotify-tool库 ext目录里有，安装到/usr/local/inotify目录
+#用法：inotify start|stop|list [app_name] [alias]
+#第二个参数指定只监控哪个应用
+#第三个参数给出一个别名，搜索应用配置文件时，将以这个别名来搜索
+
+#2 inotify list  列出当前监视哪些目录
+#3 inotify stop 停止当前监视的所有目录
+#3 inotify stop app_name 停止监视app_name的目录
+#4 inotify start 开始监视etc配置目录里的应用
+#5 inotify start app_name 开始监视etc配置目录里，app_name开头的应用
+#6 inotify start app_name alias 开始监视etc配置目录里alias开头的应用
+
+
+# path=$(cd `dirname "$0"`;pwd)
+# etc=$path/etc
+# for file in $(ls $etc|grep -v createConfig|grep -v swoole);do
+#   real_file=$etc/$file
+#   app_path_content=`sed -n '/app_path/p' $real_file`
+#   app_path=`echo $app_path_content|awk -F '=' '{print $2}'`
+
+#   app_name=`echo $file|awk -F '.' '{print $1}'`
+# done
+
+#该脚本会检测./etc目录下以app_name开头的配置脚本，只有存在相关的配置脚本，才会触发重载服务器操作。具体触发应用为：{app_name}{任意字符}
+path=$(cd `dirname "$0"`;pwd)
+etc=$path/etc
+#app根路径
+app_root=/home/www
+
+do_start(){
+  app_name="$1"
+  Alias="$2"
+  listen_path=$app_root/$app_name
+  exists=`$0 list|grep "$listen_path"`
+  if [ ! -z "$exists" ];then
+  	echo "$listen_path is runing";
+  	exit 0
+  fi
+  last_time=''
+  if [ -e "$listen_path" ];then
+    /usr/local/inotify/bin/inotifywait -rmq --exclude "$listen_path/(Log|Temp)" -e modify,create,delete,moved_to $listen_path | while read event;
+    do
+      now=`date +'%s'`
+      diff=$[now-last_time]
+      if [[ $diff -ge 2 ]];then
+        for file in $(ls $path/etc);do
+          if [ ! -z "$Alias" ];then
+            if [[ ! -z $(echo $file|grep "^$Alias") ]];then
+              sub_name=$(echo $file|awk -F . '{print $1}')
+              $path/cxsv restart $sub_name
+            fi
+          elif [ ! -z "$app_name" ]; then
+            if [[ ! -z $(echo $file|grep "^$app_name") ]];then
+              sub_name=$(echo $file|awk -F . '{print $1}')
+              $path/cxsv restart $sub_name
+            fi
+          fi
+        done
+      fi
+      last_time=`date +'%s'`
+    done >> /dev/null &
+    # done
+    echo "Start $app_name ok";
+  fi
+}
+
+do_start_all(){
+  app_name="$1"
+  Alias="$2"
+  exists=`$0 list|grep "$app_name"`
+  if [ ! -z "$exists" ];then
+  	echo "$app_name is runing [fail]"
+  	return 0
+  fi
+  if [ -z "$app_name" ] || [ -z "$Alias" ];then
+  	echo "Usega start (app_full_path) (app_name)"
+  	exit 1
+  fi
+  listen_path=$app_name
+  last_time=''
+  if [ -e "$listen_path" ];then
+    /usr/local/inotify/bin/inotifywait -rmq --exclude "$listen_path/(Log|Temp)" -e modify,create,delete,moved_to $listen_path | while read event;
+    do
+      now=`date +'%s'`
+      diff=$[now-last_time]
+      if [[ $diff -ge 2 ]];then
+      	$path/cxsv restart $Alias
+      fi
+      last_time=`date +'%s'`
+    done >> /dev/null &
+    # done
+    echo "Start $app_name [ok]";
+  else
+  	echo "$listen_path"
+  fi
+}
+
+
+case "$1" in
+  start)
+    if [ ! -z "$3" ];then
+      do_start $2 $3
+      exit 0
+    else
+      do_start $2
+      exit 0
+    # else
+    #   for app in $(ls "${path}/etc"|grep -v createConfig|grep -v swoole|awk -F . '{print $1}');do
+    #     do_start $app;
+    #   done
+    fi
+    exit 0;;
+
+  stop)
+    if [ ! -z "$2" ];then
+      $0 list|grep $2|awk '{print $1}'|xargs kill -9
+      echo -e "Stoped $2 ok!"
+    else
+      ps aux|grep inotify|grep -v grep|awk '{print $2}'|xargs kill -9
+      echo -e "Stoped all ok!"
+    fi
+    exit 0;;
+  list)
+    ps aux|grep inotifywait|grep -v grep|awk '{print $2" "$17}'
+    exit 0;;
+  startall)
+    for file in $(ls $etc|grep -v createConfig|grep -v swoole);do
+	  real_file=$etc/$file
+	  app_path_content=`sed -n '/app_path/p' $real_file`
+	  app_path=`echo $app_path_content|awk -F '=' '{print $2}'`
+	  app_name=`echo $file|awk -F '.' '{print $1}'`
+	  do_start_all $app_path $app_name
+	done
+	exit 0;;
+	*)
+    echo -e "Usega start [app_name] | stop [app_name] | list"
+    exit 0;;
+esac
+exit 0
